@@ -276,23 +276,13 @@ def explode_bom(material_id: int, production_qty: float, conn=None):
 
 def _explode_bom_recursive(material_id: int, production_qty: float, path_multiplier: float,
                             requirements: dict, conn):
+    if material_id not in requirements:
+        requirements[material_id] = {"per_unit_qty": 0.0, "total_qty": 0.0}
+    requirements[material_id]["per_unit_qty"] += path_multiplier
+    requirements[material_id]["total_qty"] += path_multiplier * production_qty
+
     children = get_children(material_id, conn)
-
-    if not children:
-        if material_id not in requirements:
-            requirements[material_id] = {"per_unit_qty": 0.0, "total_qty": 0.0}
-        requirements[material_id]["per_unit_qty"] += path_multiplier
-        requirements[material_id]["total_qty"] += path_multiplier * production_qty
-        return
-
     for child in children:
         child_qty = float(child["quantity"])
         new_multiplier = path_multiplier * child_qty
-        child_children = get_children(child["id"], conn)
-        if not child_children:
-            if child["id"] not in requirements:
-                requirements[child["id"]] = {"per_unit_qty": 0.0, "total_qty": 0.0}
-            requirements[child["id"]]["per_unit_qty"] += new_multiplier
-            requirements[child["id"]]["total_qty"] += new_multiplier * production_qty
-        else:
-            _explode_bom_recursive(child["id"], production_qty, new_multiplier, requirements, conn)
+        _explode_bom_recursive(child["id"], production_qty, new_multiplier, requirements, conn)

@@ -674,14 +674,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "错误", f"BOM 展开计算失败：{e}")
             return
 
-        if not requirements:
-            QMessageBox.information(
-                self, "结果",
-                f"该产品 BOM 结构中没有定义底层物料，无法生成需求清单。\n"
-                f"（提示：产品的 BOM 树必须包含至少一个没有子件的底层物料）"
-            )
-            return
-
         result_dlg = RequirementListDialog(
             self,
             product_info=material_info,
