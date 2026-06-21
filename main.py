@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         self.btn_add_child.clicked.connect(self.add_bom_relation)
         self.btn_remove_relation.clicked.connect(self.remove_bom_relation)
         self.btn_edit_qty.clicked.connect(self.edit_bom_quantity)
-        self.btn_refresh_tree.clicked.connect(self.refresh_tree)
+        self.btn_refresh_tree.clicked.connect(self.refresh_all)
         btn_layout.addWidget(self.btn_add_child)
         btn_layout.addWidget(self.btn_edit_qty)
         btn_layout.addWidget(self.btn_remove_relation)
@@ -401,7 +401,7 @@ class MainWindow(QMainWindow):
                 return
             try:
                 db.add_bom_relation(data["parent_id"], data["child_id"], data["quantity"])
-                self.refresh_tree()
+                self.refresh_all()
             except ValueError as e:
                 QMessageBox.warning(self, "提示", str(e))
             except Exception as e:
@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 db.remove_bom_relation(parent_id, mat_id)
-                self.refresh_tree()
+                self.refresh_all()
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"移除关系失败：{e}")
 
@@ -457,7 +457,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.Accepted:
             try:
                 db.update_bom_quantity(parent_id, mat_id, spin.value())
-                self.refresh_tree()
+                self.refresh_all()
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"修改用量失败：{e}")
 

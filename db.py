@@ -198,14 +198,16 @@ def calculate_material_cost(material_id: int, conn=None) -> float:
         with get_conn() as conn:
             return calculate_material_cost(material_id, conn)
     
+    cursor = conn.cursor()
+    cursor.execute("SELECT unit_price FROM materials WHERE id = ?", (material_id,))
+    row = cursor.fetchone()
+    self_price = float(row["unit_price"]) if row else 0.0
+    
     children = get_children(material_id, conn)
     if not children:
-        cursor = conn.cursor()
-        cursor.execute("SELECT unit_price FROM materials WHERE id = ?", (material_id,))
-        row = cursor.fetchone()
-        return float(row["unit_price"]) if row else 0.0
+        return self_price
     
-    total = 0.0
+    total = self_price
     for child in children:
         child_cost = calculate_material_cost(child["id"], conn)
         total += child_cost * float(child["quantity"])
