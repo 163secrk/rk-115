@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QBrush, QColor
 
 import db
 
@@ -161,8 +161,8 @@ class MainWindow(QMainWindow):
         group = QGroupBox("物料列表")
         group_layout = QVBoxLayout(group)
 
-        self.material_table = QTableWidget(0, 3)
-        self.material_table.setHorizontalHeaderLabels(["物料编码", "物料名称", "单价"])
+        self.material_table = QTableWidget(0, 4)
+        self.material_table.setHorizontalHeaderLabels(["物料编码", "物料名称", "单价", "总成本"])
         self.material_table.verticalHeader().setVisible(False)
         self.material_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.material_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
         self.material_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.material_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.material_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.material_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.material_table.itemSelectionChanged.connect(self._on_material_selected)
 
         group_layout.addWidget(self.material_table, 1)
@@ -199,12 +200,13 @@ class MainWindow(QMainWindow):
         group_layout = QVBoxLayout(group)
 
         self.bom_tree = QTreeWidget()
-        self.bom_tree.setHeaderLabels(["物料编码", "物料名称", "用量", "单价", "小计金额"])
+        self.bom_tree.setHeaderLabels(["物料编码", "物料名称", "用量", "单价", "子件成本", "总成本"])
         self.bom_tree.setColumnWidth(0, 140)
         self.bom_tree.setColumnWidth(1, 200)
         self.bom_tree.setColumnWidth(2, 80)
         self.bom_tree.setColumnWidth(3, 100)
         self.bom_tree.setColumnWidth(4, 120)
+        self.bom_tree.setColumnWidth(5, 120)
         self.bom_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.bom_tree.itemSelectionChanged.connect(self._on_bom_selected)
 
@@ -249,7 +251,8 @@ class MainWindow(QMainWindow):
             self.material_table.setItem(row, 0, QTableWidgetItem(m["code"]))
             self.material_table.setItem(row, 1, QTableWidgetItem(m["name"]))
             self.material_table.setItem(row, 2, QTableWidgetItem(f"{m['unit_price']:.4f}"))
-            for col in range(3):
+            self.material_table.setItem(row, 3, QTableWidgetItem(f"{m['total_cost']:.4f}"))
+            for col in range(4):
                 item = self.material_table.item(row, col)
                 item.setData(Qt.UserRole, m["id"])
 
@@ -263,18 +266,36 @@ class MainWindow(QMainWindow):
 
     def _build_tree_item(self, material, quantity, parent_id):
         price = float(material["unit_price"])
-        subtotal = price * float(quantity)
+        total_cost = float(material["total_cost"])
+        subtotal = total_cost * float(quantity)
+        children = db.get_children(material["id"])
+        
+        children_cost = 0.0
+        if children:
+            for child in children:
+                child_total = float(child["total_cost"])
+                children_cost += child_total * float(child["quantity"])
+        
         item = QTreeWidgetItem([
             material["code"],
             material["name"],
             f"{quantity:.4f}",
             f"{price:.4f}",
+            f"{children_cost:.4f}",
             f"{subtotal:.4f}",
         ])
         item.setData(0, Qt.UserRole, material["id"])
         item.setData(1, Qt.UserRole, parent_id)
         item.setData(2, Qt.UserRole, quantity)
-        children = db.get_children(material["id"])
+        
+        if not children:
+            for col in range(6):
+                item.setBackground(col, QBrush(QColor(240, 248, 255)))
+        else:
+            font = item.font(5)
+            font.setBold(True)
+            item.setFont(5, font)
+        
         for child in children:
             child_item = self._build_tree_item(child, child["quantity"], material["id"])
             item.addChild(child_item)
@@ -443,6 +464,7 @@ class MainWindow(QMainWindow):
 
 def main():
     db.init_db()
+    db.recalculate_all_costs()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = MainWindow()
