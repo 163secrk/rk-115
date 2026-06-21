@@ -35,7 +35,7 @@ class MaterialDialog(QDialog):
         super().__init__(parent)
         self.material = material
         self.setWindowTitle("新建物料" if material is None else "编辑物料")
-        self.resize(350, 180)
+        self.resize(380, 220)
 
         layout = QFormLayout(self)
 
@@ -46,8 +46,13 @@ class MaterialDialog(QDialog):
         self.price_spin.setDecimals(4)
         self.price_spin.setSingleStep(0.01)
 
+        self.type_combo = QComboBox()
+        self.type_combo.addItem("组件（可维护 BOM 子件）", db.TYPE_COMPONENT)
+        self.type_combo.addItem("零件（基础物料，无子件）", db.TYPE_PART)
+
         layout.addRow("物料编码:", self.code_edit)
         layout.addRow("物料名称:", self.name_edit)
+        layout.addRow("物料类型:", self.type_combo)
         layout.addRow("单价:", self.price_spin)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -59,11 +64,17 @@ class MaterialDialog(QDialog):
             self.code_edit.setText(material["code"])
             self.name_edit.setText(material["name"])
             self.price_spin.setValue(float(material["unit_price"]))
+            mat_type = material.get("material_type", db.TYPE_COMPONENT)
+            for i in range(self.type_combo.count()):
+                if self.type_combo.itemData(i) == mat_type:
+                    self.type_combo.setCurrentIndex(i)
+                    break
 
     def get_data(self):
         return {
             "code": self.code_edit.text().strip(),
             "name": self.name_edit.text().strip(),
+            "material_type": self.type_combo.currentData(),
             "unit_price": self.price_spin.value(),
         }
 
@@ -76,23 +87,29 @@ class BomRelationDialog(QDialog):
 
         layout = QFormLayout(self)
 
-        materials = db.get_all_materials()
-        self.material_map = {f"{m['code']} - {m['name']}": m["id"] for m in materials}
-        options = list(self.material_map.keys())
+        all_materials = db.get_all_materials()
+        self.parent_map = {
+            f"{m['code']} - {m['name']}": m["id"]
+            for m in all_materials
+            if m.get("material_type") == db.TYPE_COMPONENT
+        }
+        self.child_map = {
+            f"{m['code']} - {m['name']}": m["id"] for m in all_materials
+        }
 
         self.parent_combo = QComboBox()
-        self.parent_combo.addItems(options)
+        self.parent_combo.addItems(list(self.parent_map.keys()))
         self.child_combo = QComboBox()
-        self.child_combo.addItems(options)
+        self.child_combo.addItems(list(self.child_map.keys()))
 
         if default_parent_id is not None:
-            for label, mid in self.material_map.items():
+            for label, mid in self.parent_map.items():
                 if mid == default_parent_id:
                     self.parent_combo.setCurrentText(label)
                     break
 
         if default_child_id is not None:
-            for label, mid in self.material_map.items():
+            for label, mid in self.child_map.items():
                 if mid == default_child_id:
                     self.child_combo.setCurrentText(label)
                     break
@@ -116,8 +133,8 @@ class BomRelationDialog(QDialog):
         parent_label = self.parent_combo.currentText()
         child_label = self.child_combo.currentText()
         return {
-            "parent_id": self.material_map.get(parent_label),
-            "child_id": self.material_map.get(child_label),
+            "parent_id": self.parent_map.get(parent_label),
+            "child_id": self.child_map.get(child_label),
             "quantity": self.quantity_spin.value(),
         }
 
@@ -328,8 +345,8 @@ class MainWindow(QMainWindow):
         group = QGroupBox("物料列表")
         group_layout = QVBoxLayout(group)
 
-        self.material_table = QTableWidget(0, 4)
-        self.material_table.setHorizontalHeaderLabels(["物料编码", "物料名称", "单价", "总成本"])
+        self.material_table = QTableWidget(0, 5)
+        self.material_table.setHorizontalHeaderLabels(["物料编码", "物料名称", "物料类型", "单价", "总成本"])
         self.material_table.verticalHeader().setVisible(False)
         self.material_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.material_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -338,6 +355,7 @@ class MainWindow(QMainWindow):
         self.material_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.material_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.material_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.material_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.material_table.itemSelectionChanged.connect(self._on_material_selected)
 
         group_layout.addWidget(self.material_table, 1)
@@ -417,25 +435,73 @@ class MainWindow(QMainWindow):
         self.refresh_tree()
 
     def refresh_material_table(self):
+        selected_id = self._get_selected_material_id()
         materials = db.get_all_materials()
+        self.material_table.blockSignals(True)
         self.material_table.setRowCount(0)
+        select_row = -1
         for m in materials:
             row = self.material_table.rowCount()
             self.material_table.insertRow(row)
             self.material_table.setItem(row, 0, QTableWidgetItem(m["code"]))
             self.material_table.setItem(row, 1, QTableWidgetItem(m["name"]))
-            self.material_table.setItem(row, 2, QTableWidgetItem(f"{m['unit_price']:.4f}"))
-            self.material_table.setItem(row, 3, QTableWidgetItem(f"{m['total_cost']:.4f}"))
-            for col in range(4):
+
+            is_component = m.get("material_type") == db.TYPE_COMPONENT
+            type_label = "组件" if is_component else "零件"
+            type_item = QTableWidgetItem(type_label)
+            if is_component:
+                type_item.setForeground(QBrush(QColor("#2b5797")))
+                type_font = type_item.font()
+                type_font.setBold(True)
+                type_item.setFont(type_font)
+            else:
+                type_item.setForeground(QBrush(QColor("#888888")))
+            self.material_table.setItem(row, 2, type_item)
+
+            self.material_table.setItem(row, 3, QTableWidgetItem(f"{m['unit_price']:.4f}"))
+            self.material_table.setItem(row, 4, QTableWidgetItem(f"{m['total_cost']:.4f}"))
+            for col in range(5):
                 item = self.material_table.item(row, col)
                 item.setData(Qt.UserRole, m["id"])
+            if m["id"] == selected_id:
+                select_row = row
+        if select_row >= 0:
+            self.material_table.selectRow(select_row)
+        self.material_table.blockSignals(False)
 
     def refresh_tree(self):
         self.bom_tree.clear()
-        roots = db.get_root_materials()
-        for root in roots:
-            item = self._build_tree_item(root, 1.0, None)
-            self.bom_tree.addTopLevelItem(item)
+        mat_id = self._get_selected_material_id()
+
+        if mat_id is None:
+            self._set_bom_panel_enabled(True)
+            self.info_label.setText("提示：在左侧选中「组件」可查看/维护其 BOM 树")
+            roots = db.get_root_materials()
+            for root in roots:
+                item = self._build_tree_item(root, 1.0, None)
+                self.bom_tree.addTopLevelItem(item)
+            self.bom_tree.expandAll()
+            return
+
+        material = db.get_material_by_id(mat_id)
+        if material is None:
+            self._set_bom_panel_enabled(False)
+            self.info_label.setText("基础零件无需维护 BOM")
+            return
+
+        if material.get("material_type") == db.TYPE_PART:
+            self._set_bom_panel_enabled(False)
+            self.info_label.setText(
+                f"「{material['name']}」为基础零件，无需维护 BOM"
+            )
+            return
+
+        self._set_bom_panel_enabled(True)
+        self.info_label.setText(
+            f"当前组件：{material['code']} - {material['name']} 的 BOM 结构"
+        )
+        item = self._build_tree_item(material, 1.0, None)
+        self.bom_tree.addTopLevelItem(item)
         self.bom_tree.expandAll()
 
     def _build_tree_item(self, material, quantity, parent_id):
@@ -492,10 +558,16 @@ class MainWindow(QMainWindow):
         return mat_id, parent_id, qty
 
     def _on_material_selected(self):
-        pass
+        self.refresh_tree()
 
     def _on_bom_selected(self):
         pass
+
+    def _set_bom_panel_enabled(self, enabled):
+        self.bom_tree.setEnabled(enabled)
+        self.btn_add_child.setEnabled(enabled)
+        self.btn_remove_relation.setEnabled(enabled)
+        self.btn_edit_qty.setEnabled(enabled)
 
     def add_material(self):
         dlg = MaterialDialog(self)
@@ -505,7 +577,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "提示", "物料编码和名称不能为空")
                 return
             try:
-                db.add_material(data["code"], data["name"], data["unit_price"])
+                db.add_material(
+                    data["code"], data["name"], data["unit_price"], data["material_type"]
+                )
                 self.refresh_all()
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"新建物料失败：{e}")
@@ -523,8 +597,16 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "提示", "物料编码和名称不能为空")
                 return
             try:
-                db.update_material(mat_id, data["code"], data["name"], data["unit_price"])
+                db.update_material(
+                    mat_id,
+                    data["code"],
+                    data["name"],
+                    data["unit_price"],
+                    data["material_type"],
+                )
                 self.refresh_all()
+            except ValueError as e:
+                QMessageBox.warning(self, "提示", str(e))
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"编辑物料失败：{e}")
 
@@ -551,6 +633,10 @@ class MainWindow(QMainWindow):
         materials = db.get_all_materials()
         if len(materials) < 2:
             QMessageBox.information(self, "提示", "至少需要两个物料才能建立子件关系")
+            return
+        components = [m for m in materials if m.get("material_type") == db.TYPE_COMPONENT]
+        if not components:
+            QMessageBox.information(self, "提示", "请先创建「组件」类型的物料作为父件")
             return
 
         default_parent = None

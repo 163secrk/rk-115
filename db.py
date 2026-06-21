@@ -4,6 +4,9 @@ from contextlib import contextmanager
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bom.db")
 
+TYPE_PART = "part"
+TYPE_COMPONENT = "component"
+
 
 @contextmanager
 def get_conn():
@@ -29,13 +32,28 @@ def init_db():
                 code TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 unit_price REAL NOT NULL DEFAULT 0.0,
-                total_cost REAL NOT NULL DEFAULT 0.0
+                total_cost REAL NOT NULL DEFAULT 0.0,
+                material_type TEXT NOT NULL DEFAULT 'part'
             )
         """)
         try:
             cursor.execute("ALTER TABLE materials ADD COLUMN total_cost REAL NOT NULL DEFAULT 0.0")
         except sqlite3.OperationalError:
             pass
+        try:
+            cursor.execute(
+                "ALTER TABLE materials ADD COLUMN material_type TEXT NOT NULL DEFAULT 'part'"
+            )
+        except sqlite3.OperationalError:
+            pass
+        cursor.execute(
+            """
+            UPDATE materials
+            SET material_type = ?
+            WHERE id IN (SELECT DISTINCT parent_id FROM bom_structure)
+            """,
+            (TYPE_COMPONENT,),
+        )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS bom_structure (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,22 +67,26 @@ def init_db():
         """)
 
 
-def add_material(code: str, name: str, unit_price: float):
+def add_material(code: str, name: str, unit_price: float, material_type: str = TYPE_COMPONENT):
     with get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO materials (code, name, unit_price, total_cost) VALUES (?, ?, ?, ?)",
-            (code, name, unit_price, unit_price),
+            "INSERT INTO materials (code, name, unit_price, total_cost, material_type) VALUES (?, ?, ?, ?, ?)",
+            (code, name, unit_price, unit_price, material_type),
         )
         return cursor.lastrowid
 
 
-def update_material(material_id: int, code: str, name: str, unit_price: float):
+def update_material(material_id: int, code: str, name: str, unit_price: float, material_type: str):
     with get_conn() as conn:
         cursor = conn.cursor()
+        if material_type == TYPE_PART:
+            children = get_children(material_id, conn)
+            if children:
+                raise ValueError("该物料已拥有子件，无法更改为「零件」类型")
         cursor.execute(
-            "UPDATE materials SET code = ?, name = ?, unit_price = ? WHERE id = ?",
-            (code, name, unit_price, material_id),
+            "UPDATE materials SET code = ?, name = ?, unit_price = ?, material_type = ? WHERE id = ?",
+            (code, name, unit_price, material_type, material_id),
         )
         update_material_total_cost(material_id, conn)
         update_parent_costs(material_id, conn)
@@ -95,9 +117,15 @@ def add_bom_relation(parent_id: int, child_id: int, quantity: float):
     if parent_id == child_id:
         raise ValueError("不能将物料设为自身的子件")
     with get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT material_type FROM materials WHERE id = ?", (parent_id,))
+        parent_row = cursor.fetchone()
+        if parent_row is None:
+            raise ValueError("父件物料不存在")
+        if parent_row["material_type"] != TYPE_COMPONENT:
+            raise ValueError("只有「组件」类型的物料才能拥有子件")
         if _would_create_cycle(parent_id, child_id, conn):
             raise ValueError("添加该关系会造成循环依赖")
-        cursor = conn.cursor()
         cursor.execute(
             "INSERT OR REPLACE INTO bom_structure (parent_id, child_id, quantity) VALUES (?, ?, ?)",
             (parent_id, child_id, quantity),
