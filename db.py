@@ -245,3 +245,54 @@ def recalculate_all_costs():
         materials = get_all_materials()
         for mat in materials:
             update_material_total_cost(mat["id"], conn)
+
+
+def explode_bom(material_id: int, production_qty: float, conn=None):
+    if conn is None:
+        with get_conn() as conn:
+            return explode_bom(material_id, production_qty, conn)
+
+    requirements = {}
+    _explode_bom_recursive(material_id, production_qty, 1.0, requirements, conn)
+
+    result = []
+    for mat_id, data in requirements.items():
+        material = get_material_by_id(mat_id)
+        if material:
+            per_unit_qty = data["per_unit_qty"]
+            total_qty = data["total_qty"]
+            result.append({
+                "id": mat_id,
+                "code": material["code"],
+                "name": material["name"],
+                "per_unit_qty": per_unit_qty,
+                "total_qty": total_qty,
+                "unit_price": float(material["unit_price"]),
+                "total_price": float(material["unit_price"]) * total_qty,
+            })
+    result.sort(key=lambda x: x["code"])
+    return result
+
+
+def _explode_bom_recursive(material_id: int, production_qty: float, path_multiplier: float,
+                            requirements: dict, conn):
+    children = get_children(material_id, conn)
+
+    if not children:
+        if material_id not in requirements:
+            requirements[material_id] = {"per_unit_qty": 0.0, "total_qty": 0.0}
+        requirements[material_id]["per_unit_qty"] += path_multiplier
+        requirements[material_id]["total_qty"] += path_multiplier * production_qty
+        return
+
+    for child in children:
+        child_qty = float(child["quantity"])
+        new_multiplier = path_multiplier * child_qty
+        child_children = get_children(child["id"], conn)
+        if not child_children:
+            if child["id"] not in requirements:
+                requirements[child["id"]] = {"per_unit_qty": 0.0, "total_qty": 0.0}
+            requirements[child["id"]]["per_unit_qty"] += new_multiplier
+            requirements[child["id"]]["total_qty"] += new_multiplier * production_qty
+        else:
+            _explode_bom_recursive(child["id"], production_qty, new_multiplier, requirements, conn)

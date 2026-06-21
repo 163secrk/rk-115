@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QAbstractItemView,
+    QTextEdit,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon, QBrush, QColor
@@ -121,6 +122,172 @@ class BomRelationDialog(QDialog):
         }
 
 
+class ProductionQtyDialog(QDialog):
+    def __init__(self, parent=None, material_info=""):
+        super().__init__(parent)
+        self.setWindowTitle("需求分析 - 输入生产数量")
+        self.resize(400, 180)
+
+        layout = QVBoxLayout(self)
+
+        if material_info:
+            info_label = QLabel(f"选中产品：{material_info}")
+            info_label.setStyleSheet("color: #333; font-weight: bold; padding: 6px;")
+            info_label.setWordWrap(True)
+            layout.addWidget(info_label)
+
+        form = QFormLayout()
+        self.qty_spin = QDoubleSpinBox()
+        self.qty_spin.setRange(1, 10000000)
+        self.qty_spin.setDecimals(4)
+        self.qty_spin.setValue(1.0)
+        self.qty_spin.setSingleStep(1.0)
+        form.addRow("生产数量:", self.qty_spin)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("开始计算")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_quantity(self):
+        return self.qty_spin.value()
+
+
+class RequirementListDialog(QDialog):
+    def __init__(self, parent=None, product_info="", production_qty=0, requirements=None):
+        super().__init__(parent)
+        self.setWindowTitle("物料总需求清单")
+        self.resize(900, 600)
+
+        self.requirements = requirements or []
+        self.production_qty = production_qty
+        self.product_info = product_info
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        header_layout = QVBoxLayout()
+        title = QLabel("物料总需求清单")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignHCenter)
+        header_layout.addWidget(title)
+
+        info_text = f"产品：{product_info}    |    生产数量：{production_qty:.4f}"
+        info_label = QLabel(info_text)
+        info_label.setStyleSheet("color: #444; padding: 4px;")
+        info_label.setAlignment(Qt.AlignHCenter)
+        header_layout.addWidget(info_label)
+
+        layout.addLayout(header_layout)
+
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            "序号", "物料编码", "物料名称", "单支用量", "总需求数量", "单价", "总金额"
+        ])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        layout.addWidget(self.table, 1)
+
+        summary_layout = QHBoxLayout()
+        total_amount = sum(r["total_price"] for r in self.requirements)
+        total_items = len(self.requirements)
+        summary_label = QLabel(
+            f"物料种类：{total_items} 种    |    物料总金额：¥{total_amount:.4f}"
+        )
+        summary_label.setStyleSheet(
+            "font-weight: bold; color: #2b5797; padding: 6px;"
+        )
+        summary_layout.addWidget(summary_label)
+        summary_layout.addStretch(1)
+
+        self.btn_export = QPushButton("导出为文本")
+        self.btn_export.clicked.connect(self.export_text)
+        summary_layout.addWidget(self.btn_export)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.button(QDialogButtonBox.Close).setText("关闭")
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        summary_layout.addWidget(buttons)
+
+        layout.addLayout(summary_layout)
+
+        self._populate_table()
+
+    def _populate_table(self):
+        self.table.setRowCount(0)
+        for idx, req in enumerate(self.requirements, 1):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
+            self.table.setItem(row, 1, QTableWidgetItem(req["code"]))
+            self.table.setItem(row, 2, QTableWidgetItem(req["name"]))
+            self.table.setItem(row, 3, QTableWidgetItem(f"{req['per_unit_qty']:.4f}"))
+            item_qty = QTableWidgetItem(f"{req['total_qty']:.4f}")
+            item_qty.setForeground(QBrush(QColor("#2b5797")))
+            f = item_qty.font()
+            f.setBold(True)
+            item_qty.setFont(f)
+            self.table.setItem(row, 4, item_qty)
+            self.table.setItem(row, 5, QTableWidgetItem(f"{req['unit_price']:.4f}"))
+            item_price = QTableWidgetItem(f"{req['total_price']:.4f}")
+            item_price.setForeground(QBrush(QColor("#c00000")))
+            self.table.setItem(row, 6, item_price)
+
+            for col in range(7):
+                item = self.table.item(row, col)
+                if col == 4 or col == 6:
+                    bg = QBrush(QColor(248, 250, 252))
+                    item.setBackground(bg)
+
+    def export_text(self):
+        lines = []
+        lines.append("=" * 70)
+        lines.append("物料总需求清单")
+        lines.append("=" * 70)
+        lines.append(f"产品：{self.product_info}")
+        lines.append(f"生产数量：{self.production_qty:.4f}")
+        lines.append("-" * 70)
+        lines.append(
+            f"{'序号':<6}{'物料编码':<16}{'物料名称':<20}{'单支用量':>12}{'总需求':>14}"
+        )
+        lines.append("-" * 70)
+        for idx, req in enumerate(self.requirements, 1):
+            lines.append(
+                f"{idx:<6}{req['code']:<16}{req['name']:<20}"
+                f"{req['per_unit_qty']:>12.4f}{req['total_qty']:>14.4f}"
+            )
+        lines.append("-" * 70)
+        total_amount = sum(r["total_price"] for r in self.requirements)
+        lines.append(f"物料种类：{len(self.requirements)} 种")
+        lines.append(f"物料总金额：¥{total_amount:.4f}")
+        lines.append("=" * 70)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("导出结果")
+        dlg.resize(650, 500)
+        dlg_layout = QVBoxLayout(dlg)
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+        text_edit.setPlainText("\n".join(lines))
+        dlg_layout.addWidget(text_edit)
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(dlg.accept)
+        dlg_layout.addWidget(btn_box)
+        dlg.exec()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -179,12 +346,19 @@ class MainWindow(QMainWindow):
         self.btn_add = QPushButton("新建物料")
         self.btn_edit = QPushButton("编辑物料")
         self.btn_delete = QPushButton("删除物料")
+        self.btn_requirement = QPushButton("需求分析")
+        self.btn_requirement.setStyleSheet(
+            "QPushButton { background-color: #2b5797; color: white; padding: 6px 12px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #1e3f70; }"
+        )
         self.btn_add.clicked.connect(self.add_material)
         self.btn_edit.clicked.connect(self.edit_material)
         self.btn_delete.clicked.connect(self.delete_material)
+        self.btn_requirement.clicked.connect(self.requirement_analysis)
         btn_layout.addWidget(self.btn_add)
         btn_layout.addWidget(self.btn_edit)
         btn_layout.addWidget(self.btn_delete)
+        btn_layout.addWidget(self.btn_requirement)
         group_layout.addLayout(btn_layout)
 
         layout.addWidget(group, 1)
@@ -460,6 +634,61 @@ class MainWindow(QMainWindow):
                 self.refresh_all()
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"修改用量失败：{e}")
+
+    def requirement_analysis(self):
+        mat_id = self._get_selected_material_id()
+        if mat_id is None:
+            QMessageBox.information(self, "提示", "请先在左侧物料列表中选择一个产品")
+            return
+
+        material = db.get_material_by_id(mat_id)
+        if material is None:
+            QMessageBox.warning(self, "提示", "未找到选中的物料信息")
+            return
+
+        material_info = f"{material['code']} - {material['name']}"
+        children = db.get_children(mat_id)
+        if not children:
+            reply = QMessageBox.question(
+                self, "确认",
+                f"物料「{material_info}」目前没有定义子件（BOM结构为空）。\n"
+                f"是否仍然继续进行需求分析？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        qty_dlg = ProductionQtyDialog(self, material_info)
+        if qty_dlg.exec() != QDialog.Accepted:
+            return
+
+        production_qty = qty_dlg.get_quantity()
+        if production_qty <= 0:
+            QMessageBox.warning(self, "提示", "生产数量必须大于 0")
+            return
+
+        try:
+            requirements = db.explode_bom(mat_id, production_qty)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"BOM 展开计算失败：{e}")
+            return
+
+        if not requirements:
+            QMessageBox.information(
+                self, "结果",
+                f"该产品 BOM 结构中没有定义底层物料，无法生成需求清单。\n"
+                f"（提示：产品的 BOM 树必须包含至少一个没有子件的底层物料）"
+            )
+            return
+
+        result_dlg = RequirementListDialog(
+            self,
+            product_info=material_info,
+            production_qty=production_qty,
+            requirements=requirements,
+        )
+        result_dlg.exec()
 
 
 def main():
